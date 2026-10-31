@@ -1,4 +1,5 @@
-// export const backendPath = "http://localhost:3001/"
-// export const backendPath = "https://rommie-mate-backend.vercel.app/"
-export const backendPath = "https://roomie-mate-backend.vercel.app/"
-// export const backendPath = "http://localhost:3001/"
+// Spring Boot backend runs on port 3001 by default
+export const backendPath =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL) ||
+  (typeof process !== 'undefined' && process.env?.REACT_APP_BACKEND_URL) ||
+  'http://localhost:3001/';

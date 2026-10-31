@@ -1,37 +1,38 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
-import { useRecoilValue } from "recoil";
+import { useRecoilValue, useSetRecoilState } from "recoil";
 import { userState } from "../state/atoms/userAtom";
+import { roomIdAtom } from "../state/atoms/roomIdAtom";
 import { useNavigate } from "react-router-dom";
-import { backendPath } from "../config";
+import { userApi, roomApi } from "../api/roomieApi";
 import Loader from "./Loader";
 
 const Create = () => {
   const [totalPeople, setTotalPeople] = useState([]);
   const [invitedPeople, setInvitedPeople] = useState([]);
+  const [roomName, setRoomName] = useState("My Room");
   const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false); // Loading state
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
 
   const user = useRecoilValue(userState);
+  const setRoomId = useSetRecoilState(roomIdAtom);
 
   useEffect(() => {
     const fetchIdlePeople = async () => {
-      setLoading(true); // Start loading
+      setLoading(true);
+      setError(null);
       try {
-        const token = localStorage.getItem("token");
-        const response = await axios.get(`${backendPath}api/idlePeople`, {
-          headers: {
-            Authorization: token,
-          },
-        });
-        setTotalPeople(response.data.idlePeople); // Assuming `idlePeople` is an array of objects
+        const data = await userApi.getIdleUsers();
+        // data can be array directly or { idlePeople: [...] }
+        const list = Array.isArray(data) ? data : data?.idlePeople || [];
+        setTotalPeople(list);
       } catch (err) {
-        console.error("Error fetching idle people:", err.message);
+        console.error("Error fetching idle people:", err);
         setError("Failed to load idle people.");
       } finally {
-        setLoading(false); // End loading
+        setLoading(false);
       }
     };
 
@@ -39,127 +40,174 @@ const Create = () => {
   }, []);
 
   const handleCreate = async () => {
+    if (!roomName.trim()) {
+      setError("Please provide a room name.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+
     try {
-      const token = localStorage.getItem("token");
-      if (!token) {
-        setError("User is not authenticated. Please log in.");
-        return;
+      const invitedIds = invitedPeople.map((person) => person.id || person._id);
+      const data = await roomApi.createRoom(roomName.trim(), invitedIds);
+      // data = RoomResponse { id, name, members, ... }
+      const newRoomId = data?.id || data?._id || data?.roomId;
+
+      alert("Room created successfully!");
+      setInvitedPeople([]);
+
+      if (newRoomId) {
+        localStorage.setItem("roomId", newRoomId);
+        localStorage.setItem("currentRoomId", newRoomId);
+        setRoomId(newRoomId);
       }
 
-      const response = await axios.post(
-        `${backendPath}api/rooms`,
-        {
-          members: invitedPeople.map((person) => person._id)
-        },
-        {
-          headers: {
-            Authorization: token,
-          },
-        }
-      );
-
-      if (response.data.success) {
-        alert("Room created successfully!");
-        setInvitedPeople([]);
-        localStorage.setItem('roomId', response.data.roomId);
-        navigate("/home");
-      }
+      navigate("/home");
     } catch (err) {
-      console.error("Error creating room:", err.message);
-      setError(err.response?.data?.message || "Failed to create the room.");
+      console.error("Error creating room:", err);
+      setError(err?.message || "Failed to create the room.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const filteredPeople = totalPeople.filter((person) =>
-    person.name.toLowerCase().includes(searchQuery.toLowerCase())
+    (person.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (person.email || "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleInvite = (person) => {
+    const pId = person.id || person._id;
     setInvitedPeople((prev) => [...prev, person]);
-    setTotalPeople((prev) => prev.filter((p) => p._id !== person._id));
+    setTotalPeople((prev) => prev.filter((p) => (p.id || p._id) !== pId));
   };
 
   const handleRemove = (person) => {
+    const pId = person.id || person._id;
     setTotalPeople((prev) => [...prev, person]);
-    setInvitedPeople((prev) => prev.filter((p) => p._id !== person._id));
+    setInvitedPeople((prev) => prev.filter((p) => (p.id || p._id) !== pId));
   };
 
   return (
-    <div className="h-screen flex flex-col p-4 bg-gray-100">
-      <div className="flex-grow">
-        <h2 className="text-xl font-semibold mb-4">Create a Room</h2>
-        <div>
-          <input
-            type="text"
-            className="h-7 border border-gray-300 rounded-lg px-2 py-5 w-full"
-            placeholder="Search user by Name"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {loading ? (
-            
-            <div className="h-44 overflow-auto mt-4 border-2 border-gray-300 bg-white rounded-lg">
-              <div className="w-1/2 m-auto h-1/2 mt-4" >
-              <Loader text="Loading Idle People"/>
+    <div className="min-h-screen flex flex-col p-6 bg-gray-100">
+      <div className="flex-grow max-w-xl mx-auto w-full">
+        <h2 className="text-2xl font-bold mb-4 text-[#809539]">Create a Room</h2>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-100 border border-red-300 text-red-700 text-xs rounded-lg">
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase text-gray-600 mb-1">
+              Room Name
+            </label>
+            <input
+              type="text"
+              className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#809539]"
+              placeholder="e.g. Apartment 402, Oakwood Suite"
+              value={roomName}
+              onChange={(e) => setRoomName(e.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase text-gray-600 mb-1">
+              Invite Roommates
+            </label>
+            <input
+              type="text"
+              className="border border-gray-300 rounded-lg px-3 py-2 w-full text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#809539]"
+              placeholder="Search user by name or email"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+
+            {loading ? (
+              <div className="h-44 overflow-auto mt-2 border border-gray-200 bg-white rounded-lg flex items-center justify-center">
+                <Loader text="Loading Idle People..." />
               </div>
-              
-            </div>
-             
-          ) : (
-            <div className="h-44 overflow-auto mt-4 border-2 border-gray-300 bg-white rounded-lg">
-              {filteredPeople.map((person) => (
-                <div
-                  key={person._id}
-                  className="p-2 border-b border-gray-200 hover:bg-gray-100 cursor-pointer"
-                >
-                  <div className="flex justify-between items-center">
-                    <div className="w-3/4">
-                      <strong>Name:</strong> {person.name} <br />
-                      <strong>Email:</strong> {person.email}
-                    </div>
-                    <button
-                      className="bg-green-400 rounded-md p-1.5"
-                      onClick={() => handleInvite(person)}
+            ) : (
+              <div className="h-44 overflow-auto mt-2 border border-gray-200 bg-white rounded-lg divide-y divide-gray-100">
+                {filteredPeople.length === 0 ? (
+                  <p className="p-4 text-xs text-gray-400 text-center">
+                    No idle users found.
+                  </p>
+                ) : (
+                  filteredPeople.map((person) => {
+                    const pId = person.id || person._id;
+                    return (
+                      <div
+                        key={pId}
+                        className="p-2.5 hover:bg-gray-50 flex justify-between items-center transition-colors"
+                      >
+                        <div className="text-xs">
+                          <p className="font-semibold text-gray-800">{person.name}</p>
+                          <p className="text-gray-500">{person.email}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="bg-green-500 hover:bg-green-600 text-white text-xs font-medium rounded-md px-3 py-1 cursor-pointer transition-colors"
+                          onClick={() => handleInvite(person)}
+                        >
+                          Invite
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h3 className="font-semibold text-xs uppercase text-gray-600 mb-1">
+              Invited People ({invitedPeople.length})
+            </h3>
+            <div className="h-40 overflow-auto border border-gray-200 bg-white rounded-lg divide-y divide-gray-100">
+              {invitedPeople.length === 0 ? (
+                <p className="p-4 text-xs text-gray-400 text-center">
+                  No roommates invited yet. You can invite idle users above.
+                </p>
+              ) : (
+                invitedPeople.map((person) => {
+                  const pId = person.id || person._id;
+                  return (
+                    <div
+                      key={pId}
+                      className="p-2.5 hover:bg-gray-50 flex justify-between items-center transition-colors"
                     >
-                      Invite
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="mt-4">
-            <h2 className="font-semibold">Invited People</h2>
-            <div className="h-44 overflow-auto mt-2 border-2 border-gray-300 bg-white rounded-lg">
-              {invitedPeople.map((person) => (
-                <div
-                  key={person._id}
-                  className="p-2 border-b border-gray-200 hover:bg-gray-100 cursor-pointer"
-                >
-                  <div className="flex justify-between items-center">
-                    <div className="w-3/4">
-                      <strong>Name:</strong> {person.name} <br />
-                      <strong>Email:</strong> {person.email}
+                      <div className="text-xs">
+                        <p className="font-semibold text-gray-800">{person.name}</p>
+                        <p className="text-gray-500">{person.email}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="bg-red-500 hover:bg-red-600 text-white text-xs font-medium rounded-md px-3 py-1 cursor-pointer transition-colors"
+                        onClick={() => handleRemove(person)}
+                      >
+                        Remove
+                      </button>
                     </div>
-                    <button
-                      className="bg-red-600 rounded-md p-1.5 text-white"
-                      onClick={() => handleRemove(person)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
+
+        <button
+          className="w-full mt-6 py-3 bg-[#809539] hover:bg-[#6e8030] text-white font-semibold rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+          onClick={handleCreate}
+          disabled={submitting}
+        >
+          {submitting ? "Creating Room..." : "Create Room"}
+        </button>
       </div>
-      <button
-        className="w-full lg:w-1/4 p-2 bg-amber-400 rounded-lg mx-auto"
-        onClick={handleCreate}
-      >
-        Create Room
-      </button>
     </div>
   );
 };

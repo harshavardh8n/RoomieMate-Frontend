@@ -1,142 +1,152 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { useRecoilState } from 'recoil';
+import { useSetRecoilState } from 'recoil';
 import { roomIdAtom } from '../state/atoms/roomIdAtom';
-import { backendPath } from '../config';
-import Loader from './Loader';
+import { invitationApi } from '../api/roomieApi';
 import Skeleton from './Skeleton';
 
 const Invitation = () => {
-  const [invitations, setInvitations] = useState([]);  // Start with an empty array
-  const [loading, setLoading] = useState(true);  // Track loading state
-  const [error, setError] = useState(null);  // For error handling
+  const [invitations, setInvitations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const navigate = useNavigate();
-  const [roomid, setRoomId] = useRecoilState(roomIdAtom);
+  const setRoomId = useSetRecoilState(roomIdAtom);
 
-  // Fetch invitations when the component is mounted
-  useEffect(() => {
-    const fetchInvitations = async () => {
-      try {
-        const token = localStorage.getItem('token');  // Assuming token is stored in localStorage
-
-        if (!token) {
-          setError('No token found. Please log in.');
-          setLoading(false);
-          return;
-        }
-
-        // Send the GET request with the Authorization header
-        const response = await axios.get(`${backendPath}api/getInvites`, {
-          headers: {
-            'Authorization': token  // Pass the token in the Authorization header
-          }
-        });
-
-        if (response.data.success) {
-          setInvitations(response.data.invites);  // Set the fetched invitations to state
-        } else {
-          setError(response.data.message);
-        }
-      } catch (error) {
-        setError('Error fetching invitations.');
-        console.error('Error fetching invitations:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchInvitations();  // Call the function to fetch invitations
-  }, []);  // Empty dependency array to run only once when the component is mounted
-
-  const acceptInvite = async (inviteId,name) => {
+  const fetchInvitations = async () => {
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        setError('No token found. Please log in.');
-        return;
+      setLoading(true);
+      setError(null);
+      const data = await invitationApi.getPendingInvitations();
+      // data can be array directly or { invites: [...] }
+      const list = Array.isArray(data) ? data : data?.invites || [];
+      setInvitations(list);
+    } catch (err) {
+      console.error('Error fetching invitations:', err);
+      setError('Error fetching invitations.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchInvitations();
+  }, []);
+
+  const acceptInvite = async (inviteId, senderName) => {
+    try {
+      const data = await invitationApi.acceptInvitation(inviteId);
+      // data can be RoomResponse { id, name, ... } or { room: { id, ... } }
+      const newRoom = data?.room || data;
+      const acceptedRoomId = newRoom?.id || newRoom?._id || data?.roomId;
+
+      alert(`Accepted invitation from ${senderName || 'roommate'}!`);
+      setInvitations((prev) => prev.filter((inv) => (inv.id || inv._id) !== inviteId));
+
+      if (acceptedRoomId) {
+        setRoomId(acceptedRoomId);
+        localStorage.setItem('roomId', acceptedRoomId);
+        localStorage.setItem('currentRoomId', acceptedRoomId);
       }
 
-      // Log the token to ensure it's correct
-      console.log('Token:', token);
-      alert(name)
-      // Make API request to accept the invitation
-      const response = await axios.post(`${backendPath}api/acceptInvitations`, {
-        invitationId: inviteId,
-      }, {
-        headers: {
-          Authorization:token
-        }
-      });
+      navigate('/home');
+    } catch (err) {
+      console.error('Error accepting invitation:', err);
+      alert(err?.message || 'Failed to accept the invitation.');
+    }
+  };
 
-      // Log the response to check if it's successful
-      console.log('Response:', response.data);
-
-      // If the invitation is accepted, remove it from the list and update state
-      if (response.data.success) {
-        setInvitations(invitations.filter(invite => invite._id !== inviteId));
-        setRoomId(response.data.room._id);
-        localStorage.setItem('roomId', response.data.room._id);
-        alert('Invitation accepted successfully!');
-        navigate("/home");
-      } else {
-        setError(response.data.message || 'Failed to accept the invitation.');
-      }
-    } catch (error) {
-      // Catch errors and log them
-      setError('Error accepting invitation.');
-      console.error('Error accepting invitation:', error.response || error.message);
+  const rejectInvite = async (inviteId) => {
+    try {
+      await invitationApi.rejectInvitation(inviteId);
+      setInvitations((prev) => prev.filter((inv) => (inv.id || inv._id) !== inviteId));
+      alert('Invitation rejected.');
+    } catch (err) {
+      console.error('Error rejecting invitation:', err);
+      alert(err?.message || 'Failed to reject invitation.');
     }
   };
 
   if (loading) {
-    return <div className="flex flex-col h-screen">
-    <div>
-      <h2 className="m-4 font-semibold text-xl">Invitations</h2>
-    </div>
-    <div className="flex-1 mx-4 bg-white border border-gray-300 rounded-lg overflow-auto">
-    <div className="flex justify-between items-center p-4 border-b border-gray-200 m-auto">
-            <Skeleton/>  
-    </div>
-    </div>
-    <div className="m-auto p-2 rounded-lg bg-yellow-400 mt-8">
-      <button>Find rooms in your area</button>
-    </div>
-  </div>;  // Show loading state
+    return (
+      <div className="flex flex-col h-full min-h-screen p-6">
+        <h2 className="font-semibold text-xl mb-4 text-gray-800">Pending Invitations</h2>
+        <div className="flex-1 bg-white border border-gray-200 rounded-xl p-4 overflow-auto">
+          <Skeleton />
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="flex flex-col h-screen">
-      <div>
-        <h2 className="m-4 font-semibold text-xl">Invitations</h2>
+    <div className="flex flex-col h-full min-h-screen p-6">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="font-semibold text-xl text-gray-800">Pending Invitations</h2>
+        <button
+          onClick={fetchInvitations}
+          className="text-xs text-blue-600 hover:underline cursor-pointer"
+        >
+          Refresh
+        </button>
       </div>
-      <div className="flex-1 mx-4 bg-white border border-gray-300 rounded-lg overflow-auto">
-        {/* {error && <div className="text-red-600 p-4 text-center">{error}</div>} Show error if any */}
-        
+
+      {error && <div className="text-red-500 text-xs mb-3">{error}</div>}
+
+      <div className="flex-1 bg-white border border-gray-200 rounded-xl overflow-auto divide-y divide-gray-100 shadow-sm">
         {invitations.length === 0 ? (
-          <div className="p-4 text-center text-gray-600">No invitations found</div>
+          <div className="p-8 text-center text-gray-400 text-sm">
+            <span className="text-3xl block mb-2">✉️</span>
+            No pending invitations found.
+          </div>
         ) : (
-          invitations.map((inv) => (
-            <div key={inv._id} className="flex justify-between items-center p-4 border-b border-gray-200">
-              <div className="w-3/4">
-                <div className="font-semibold">Room ID: {inv.roomId._id}</div>
-                <div className="text-gray-600">Sender: {inv.senderId.name}</div> {/* Assuming senderId is the admin */}
-                <div className="text-gray-600">Roommates: {inv.roommates}</div> {/* Number of roommates */}
+          invitations.map((inv) => {
+            const inviteId = inv.id || inv._id;
+            const roomIdVal =
+              inv.roomId?.id ||
+              inv.roomId?._id ||
+              (typeof inv.roomId === 'string' ? inv.roomId : null);
+            const senderName =
+              inv.sender?.name || inv.senderId?.name || inv.Admin || 'Roommate';
+            const roomName = inv.roomName || 'Shared Apartment';
+            const roommatesCount = inv.roommatesCount || inv.roommates || 1;
+
+            return (
+              <div
+                key={inviteId}
+                className="flex flex-col sm:flex-row justify-between sm:items-center p-4 hover:bg-gray-50 transition-colors gap-3"
+              >
+                <div className="text-sm">
+                  <div className="font-semibold text-gray-900 text-base">{roomName}</div>
+                  <div className="text-gray-600 text-xs mt-0.5">
+                    <strong>Invited by:</strong> {senderName}
+                  </div>
+                  <div className="text-gray-500 text-xs">
+                    <strong>Current Members:</strong> {roommatesCount}
+                  </div>
+                  {roomIdVal && (
+                    <div className="text-gray-400 text-[10px] font-mono mt-1">
+                      Room ID: {roomIdVal}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-medium cursor-pointer transition-colors shadow-xs"
+                    onClick={() => acceptInvite(inviteId, senderName)}
+                  >
+                    Accept
+                  </button>
+                  <button
+                    className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-medium cursor-pointer transition-colors"
+                    onClick={() => rejectInvite(inviteId)}
+                  >
+                    Reject
+                  </button>
+                </div>
               </div>
-              <div className="flex justify-center">
-                <button 
-                  className="p-2 bg-green-500 rounded-lg w-20"
-                  onClick={() => acceptInvite(inv._id,inv.senderId.name)}  // Fix for onClick handler
-                >
-                  Accept
-                </button>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
-      </div>
-      <div className="m-auto p-2 rounded-lg bg-yellow-400 mt-8">
-        <button>Find rooms in your area</button>
       </div>
     </div>
   );

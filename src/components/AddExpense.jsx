@@ -1,196 +1,267 @@
-import React, { useState, useEffect,Suspense } from "react";
-import axios from "axios";
-import { backendPath } from "../config"; // Adjust the path as needed
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { expenseApi, roomApi } from "../api/roomieApi";
 
-const SplitterLayout = ({ roommates, onRoommateClick }) => {
-    // Display message if no roommates are available
-    if (!roommates.length) {
-      return <div className="text-center text-gray-500">No roommates available to display.</div>;
-    }
-  
-    return (
-      <div className="grid grid-cols-3 gap-4 mt-4">
-        {roommates.map((roommate) => (
-          <div
-            key={roommate._id}
-            className="p-2 border rounded-md cursor-pointer hover:bg-gray-200"
-            onClick={() => onRoommateClick(roommate)} // Use onRoommateClick from props
+const CATEGORIES = ['FOOD', 'GROCERIES', 'RENT', 'UTILITIES', 'ENTERTAINMENT', 'SHOPPING', 'OTHER'];
+
+const SplitterLayout = ({ roommates, selectedRoommates, onToggleRoommate }) => {
+  if (!roommates || roommates.length === 0) {
+    return <div className="text-center text-gray-400 text-xs py-2">No roommates available.</div>;
+  }
+
+  return (
+    <div className="grid grid-cols-2 gap-2 mt-2 max-h-36 overflow-y-auto p-1">
+      {roommates.map((roommate) => {
+        const rId = roommate.id || roommate._id;
+        const isSelected = selectedRoommates.some((r) => (r.id || r._id) === rId);
+
+        return (
+          <button
+            type="button"
+            key={rId}
+            className={`p-2 border rounded-lg text-xs font-medium text-left transition-colors cursor-pointer ${
+              isSelected
+                ? 'bg-[#809539] text-white border-[#809539]'
+                : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+            }`}
+            onClick={() => onToggleRoommate(roommate)}
           >
-            {roommate.name}
-          </div>
-        ))}
+            {isSelected ? '✓ ' : '+ '} {roommate.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+const AddExpense = ({ onExpenseAdded }) => {
+  const [roommates, setRoommates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [selectedRoommates, setSelectedRoommates] = useState([]);
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("FOOD");
+  const navigate = useNavigate();
+
+  const fetchRoommates = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const roomId = localStorage.getItem("roomId") || localStorage.getItem("currentRoomId");
+
+      if (roomId) {
+        try {
+          const room = await roomApi.getRoomDetails(roomId);
+          if (room && room.members) {
+            setRoommates(room.members);
+            setSelectedRoommates(room.members); // Default: split with everyone
+            setLoading(false);
+            return;
+          }
+        } catch (detailErr) {
+          console.warn('Falling back to getUserRooms()', detailErr);
+        }
+      }
+
+      const rooms = await roomApi.getUserRooms();
+      const roomList = Array.isArray(rooms) ? rooms : rooms?.rooms || [];
+      if (roomList.length > 0) {
+        const primaryRoom = roomList[0];
+        const primaryId = primaryRoom.id || primaryRoom._id;
+        if (primaryId) {
+          localStorage.setItem("roomId", primaryId);
+          localStorage.setItem("currentRoomId", primaryId);
+        }
+        const members = primaryRoom.members || [];
+        setRoommates(members);
+        setSelectedRoommates(members);
+      } else {
+        setRoommates([]);
+      }
+    } catch (err) {
+      console.error("Failed to fetch roommates:", err);
+      setError("Failed to fetch roommates.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRoommates();
+  }, []);
+
+  const handleToggleRoommate = (roommate) => {
+    const rId = roommate.id || roommate._id;
+    if (selectedRoommates.some((r) => (r.id || r._id) === rId)) {
+      if (selectedRoommates.length === 1) {
+        setError("At least one person must be selected to split.");
+        return;
+      }
+      setSelectedRoommates(selectedRoommates.filter((r) => (r.id || r._id) !== rId));
+    } else {
+      setSelectedRoommates([...selectedRoommates, roommate]);
+    }
+  };
+
+  const handleSelectAll = () => {
+    setSelectedRoommates(roommates);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!amount || parseFloat(amount) <= 0) {
+      setError("Please provide a valid amount greater than 0.");
+      return;
+    }
+    if (!description.trim()) {
+      setError("Please provide an expense description.");
+      return;
+    }
+    if (selectedRoommates.length === 0) {
+      setError("Please select at least one roommate to split with.");
+      return;
+    }
+
+    const roomId = localStorage.getItem("roomId") || localStorage.getItem("currentRoomId");
+    if (!roomId) {
+      setError("Room ID not found. Please select or create a room.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const splittersIds = selectedRoommates.map((r) => r.id || r._id);
+
+      await expenseApi.createExpense(roomId, {
+        description: description.trim(),
+        amount: parseFloat(amount),
+        category,
+        splittersIds,
+      });
+
+      alert("Expense added and balances updated!");
+      setAmount("");
+      setDescription("");
+      setCategory("FOOD");
+      setSelectedRoommates(roommates);
+
+      if (onExpenseAdded) {
+        onExpenseAdded();
+      }
+    } catch (err) {
+      console.error("Error adding expense:", err);
+      setError(err?.message || "Failed to add expense.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 text-center">
+        <p className="text-gray-400 text-sm">Loading roommates...</p>
       </div>
     );
-  };
-  
+  }
 
-  
-  const AddExpense = () => {
-      const [roommates, setRoommates] = useState([]); // List of roommates
-      const [loading, setLoading] = useState(true); // Loading state
-      const [error, setError] = useState(null); // Error state
-      const [selectedRoommates, setSelectedRoommates] = useState([]); // List of selected roommates
-      const [amount, setAmount] = useState(0); // Expense amount
-      const [description, setDescription] = useState(""); // Expense description
-      const [expenseAdded, setExpenseAdded] = useState(false); // State to track expense addition
-      const navigate = useNavigate();
-  
-      // Fetch roommates data when the component mounts or when expense is added
-      useEffect(() => {
-          const fetchRoommates = async () => {
-              try {
-                  const token = localStorage.getItem("token");
-                  const roomId = localStorage.getItem("roomId");
-  
-                  if (!token || !roomId) {
-                      setError("Token or Room ID is missing.");
-                      setLoading(false);
-                      return;
-                  }
-  
-                  const response = await axios.get(`${backendPath}api/room`, {
-                      headers: {
-                          Authorization: token,
-                      },
-                  });
-  
-                  if (response.status === 200) {
-                      setRoommates(response.data.members);
-                  }
-              } catch (err) {
-                  setError("Failed to fetch roommates.");
-              } finally {
-                  setLoading(false);
-              }
-          };
-  
-          fetchRoommates();
-      }, [expenseAdded]); // Refetch roommates when expense is added
-  
-      const handleSelection = async () => {
-          if (!amount || !description || selectedRoommates.length === 0) {
-              setError("Please provide an amount, description, and select roommates.");
-              return;
-          }
-  
-          const token = localStorage.getItem("token");
-          const roomId = localStorage.getItem("roomId");
-  
-          if (!token) {
-              setError("Authorization token is missing.");
-              return;
-          }
-  
-          try {
-              // Prepare the data to be sent in the API request
-              const expenseData = {
-                  amount: amount,
-                  roomId: roomId,
-                  expenseDesc: description,
-                  splittersIds: selectedRoommates.map(roommate => roommate._id),
-              };
-  
-              // API call to add the expense
-              const response = await axios.post(
-                  `${backendPath}expenses/add`,
-                  expenseData,
-                  {
-                      headers: {
-                          Authorization: token,
-                      },
-                  }
-              );
+  return (
+    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+      <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+        <span>➕</span> Add New Expense
+      </h2>
 
-              console.log(response)
-  
-              if (response.status === 201) {
-                  alert("Expense added successfully!");
-                  setAmount(""); // Reset the form fields
-                  setDescription("");
-                  setSelectedRoommates([]); // Clear selected roommates
-  
-                  // Set expenseAdded to trigger re-render and show the new components
-                  navigate("/home");
-              } else {
-                  setError("Failed to add expense.");
-              }
-          } catch (error) {
-              setError("Error adding expense.");
-          }
-      };
-  
-      const handleRoommateClick = (roommate) => {
-          if (selectedRoommates.includes(roommate)) {
-              // Deselect roommate if already selected
-              setSelectedRoommates(selectedRoommates.filter(r => r._id !== roommate._id));
-              setRoommates(prevRoommates => [...prevRoommates, roommate]);
-          } else {
-              // Add roommate to selected
-              setSelectedRoommates([...selectedRoommates, roommate]);
-              setRoommates(prevRoommates => prevRoommates.filter(r => r._id !== roommate._id));
-          }
-      };
-  
-      if (loading) {
-          return <p>Loading roommates...</p>;
-      }
-  
-      if (error) {
-          return <p className="text-red-500">{error}</p>;
-      }
-  
-      return (
-          <div className="flex justify-center items-center h-screen">
-              <div className="bg-white p-6 rounded-lg shadow-sm max-w-md w-full">
-                  <h1 className="text-2xl font-semibold text-center mb-6 text-gray-700">Add an Expense</h1>
-  
-                  <div className="space-y-4">
-                      {/* Input field for amount */}
-                      <div>
-                          <label className="block text-gray-600">Amount</label>
-                          <input
-                              type="number"
-                              className="p-2 w-full border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              value={amount}
-                              onChange={(e) => setAmount(e.target.value)}
-                          />
-                      </div>
-  
-                      {/* Input field for description */}
-                      <div>
-                          <label className="block text-gray-600">Description</label>
-                          <input
-                              type="text"
-                              className="p-2 w-full border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              value={description}
-                              onChange={(e) => setDescription(e.target.value)}
-                              placeholder="Description of the expense"
-                          />
-                      </div>
-  
-                      {/* Splitters */}
-                      <div>
-                          <label className="block text-gray-600">Select Splitters</label>
-                          <SplitterLayout roommates={roommates} onRoommateClick={handleRoommateClick} />
-                      </div>
-  
-                      {/* Error Message */}
-                      {error && <p className="text-red-500 text-sm">{error}</p>}
-  
-                      {/* Submit Button */}
-                      <div>
-                          <button
-                              onClick={handleSelection}
-                              className="w-full py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                              Add Expense
-                          </button>
-                      </div>
-                  </div>
-              </div>
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-lg border border-red-200">
+          {error}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
+            Description
+          </label>
+          <input
+            type="text"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#809539]"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="e.g. WiFi Bill, Dinner at Olive Garden"
+            required
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
+              Amount ($)
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#809539]"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              required
+            />
           </div>
-      );
-  };
-  
-  export default AddExpense;
+
+          <div>
+            <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
+              Category
+            </label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#809539]"
+            >
+              {CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex justify-between items-center mb-1">
+            <label className="block text-xs font-semibold uppercase text-gray-500">
+              Split with ({selectedRoommates.length}/{roommates.length})
+            </label>
+            {selectedRoommates.length < roommates.length && (
+              <button
+                type="button"
+                onClick={handleSelectAll}
+                className="text-[11px] text-blue-600 hover:underline cursor-pointer"
+              >
+                Select All
+              </button>
+            )}
+          </div>
+          <SplitterLayout
+            roommates={roommates}
+            selectedRoommates={selectedRoommates}
+            onToggleRoommate={handleToggleRoommate}
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full py-2.5 bg-[#809539] hover:bg-[#6c7f30] text-white font-medium rounded-lg text-sm transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+        >
+          {submitting ? "Splitting Expense..." : "Split Expense"}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+export default AddExpense;

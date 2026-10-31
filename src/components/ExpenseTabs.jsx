@@ -24,15 +24,13 @@ const ExpenseTab = () => {
   return (
     <div className="flex flex-row mt-5">
       <ul className="flex flex-wrap text-sm font-medium text-center text-black border-b border-gray-200 dark:border-gray-700 dark:text-gray-400">
-        {roomieNames.map((roomie) => (
-          <li key={roomie.userId} className="me-2">
-            <a
-              href="#"
-              aria-current="page" // Add the condition to check if it's the active one
-              className="inline-block p-2 border-2 rounded-t-lg hover:text-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 dark:hover:text-gray-300 active:bg-gray-800"
+        {roomieNames.map((roomie, index) => (
+          <li key={roomie.userId || roomie.id || roomie._id || index} className="me-2">
+            <span
+              className="inline-block p-2 border-b-2 border-[#809539] text-[#809539] font-medium text-xs rounded-t-lg bg-gray-50"
             >
               {roomie.name}
-            </a>
+            </span>
           </li>
         ))}
       </ul>

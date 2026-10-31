@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { userState } from '../state/atoms/userAtom';
 import { useRecoilState } from 'recoil';
 import { roomIdAtom } from '../state/atoms/roomIdAtom';
-import { backendPath } from '../config';
+import { authApi } from '../api/roomieApi';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -12,8 +12,8 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const [user, setUser] = useRecoilState(userState); // Recoil state
-  const [roomId, setRoomId] = useRecoilState(roomIdAtom);
+  const [, setUser] = useRecoilState(userState);
+  const [, setRoomId] = useRecoilState(roomIdAtom);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -21,46 +21,29 @@ const Login = () => {
     setError('');
 
     try {
-      const response = await fetch(`${backendPath}user/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        console.log('Login successful:', data);
-
-        // Set user state only if user data is available
+      const data = await authApi.login(email, password);
+      // data = { token, user: { id, name, email }, roomId }
+      if (data && data.token) {
+        localStorage.setItem('token', data.token);
         if (data.user) {
-          setUser(data.user);  // Set the user state properly
+          localStorage.setItem('user', JSON.stringify(data.user));
+          setUser(data.user);
+        }
 
-          const newToken = `Bearer ${data.token}`;
-          localStorage.setItem('token', newToken);
-
-          alert('Login successful!');
-
-          // Now that the user state is set, proceed to the next page
-          if (data.roomId) {
-            // alert(data.roomId)
-           setRoomId(data.roomId)
-           localStorage.setItem('roomId', data.roomId);
-            navigate('/home');
-          } else {
-            navigate('/createroom');
-          }
+        if (data.roomId) {
+          localStorage.setItem('roomId', data.roomId);
+          localStorage.setItem('currentRoomId', data.roomId);
+          setRoomId(data.roomId);
+          navigate('/home');
         } else {
-          setError('User data is not available.');
+          navigate('/createroom');
         }
       } else {
-        setError(data.message || 'Something went wrong');
+        setError('Login failed. Please check your credentials.');
       }
     } catch (err) {
       console.error('Error during login:', err);
-      setError('Failed to connect to the server. Please try again later.');
+      setError(err?.message || 'Login failed. Please check your email and password.');
     } finally {
       setLoading(false);
     }
@@ -120,19 +103,16 @@ const Login = () => {
             )}
             <button
               type="submit"
-              className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 focus:ring-4 focus:outline-none focus:ring-blue-300 dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800"
+              disabled={loading}
+              className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 focus:ring-4 focus:outline-none focus:ring-blue-300 dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800 disabled:opacity-50 cursor-pointer"
             >
-              {loading ? 'Loading...' : 'Sign in'}
+              {loading ? 'Signing in...' : 'Sign in'}
             </button>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Don't have an account yet?{' '}
-              <NavLink to={"/signup"}>
-              <a
-                className="font-medium text-blue-600 hover:underline dark:text-blue-500"
-                >
+              <NavLink to="/signup" className="font-medium text-blue-600 hover:underline dark:text-blue-500">
                 Sign up
-              </a>
-                </NavLink>
+              </NavLink>
             </p>
           </form>
         </div>
